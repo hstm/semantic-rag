@@ -187,7 +187,7 @@ Edit the following in `main.rs`:
 let mut rag = RagSystem::new("models/model.onnx").await?;
 
 // Qdrant connection
-let qdrant_client = Qdrant::from_url("http://localhost:6334").build()?;
+let qdrant_client = Qdrant::from_url("http://localhost:6333").build()?;
 
 // Collection name
 let collection_name = "documents".to_string();

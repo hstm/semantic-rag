@@ -105,7 +105,7 @@ impl RagSystem {
         println!("Model loaded successfully");
 
         // Connect to Qdrant (local instance)
-        let qdrant_client = Qdrant::from_url("http://localhost:6334").build()?;
+        let qdrant_client = Qdrant::from_url("http://localhost:6333").build()?;
         
         let collection_name = "documents".to_string();
         let vector_size = 384; // all-MiniLM-L6-v2 dimension
