@@ -1,6 +1,6 @@
 # 🦀 RAG System with Semantic Chunking
 
-A high-performance Retrieval-Augmented Generation (RAG) system built in Rust, featuring **true semantic chunking** for superior document processing and retrieval quality.
+A high-performance Retrieval-Augmented Generation (RAG) system built in Rust, featuring semantic chunking for superior document processing and retrieval quality.
 
 ## ✨ Features
 
