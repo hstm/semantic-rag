@@ -1142,6 +1142,10 @@ async fn main() -> anyhow::Result<()> {
     // Get API key from environment variable
     let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY")
         .context("ANTHROPIC_API_KEY environment variable must be set")?;
+
+    if anthropic_api_key.trim().is_empty() {
+    anyhow::bail!("ANTHROPIC_API_KEY environment variable must not be empty");
+    }
     
     // Initialize RAG system
     let mut rag = RagSystem::new(
