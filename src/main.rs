@@ -16,6 +16,7 @@ tower-http = { version = "0.6.6", features = ["cors"] }
 anyhow = "1.0.100"
 pdf-extract = "0.7"
 regex = "1.12.2"
+tokenizers = "0.22.1"
 */
 
 use axum::{
@@ -43,6 +44,9 @@ use tokio::sync::Mutex;
 use pdf_extract::extract_text_from_mem;
 use regex::Regex;
 use tower_http::cors::CorsLayer;
+use tokenizers::{Tokenizer, PaddingParams, PaddingStrategy, TruncationParams};
+use reqwest::Client;
+
 
 // ============================================================================
 // Data Structures
@@ -58,6 +62,9 @@ struct RagSystem {
     qdrant_client: Qdrant,
     collection_name: String,
     vector_size: usize,
+    tokenizer: Tokenizer,
+    anthropic_client: Client,
+    anthropic_api_key: String,
 }
 
 #[derive(Deserialize)]
@@ -89,12 +96,40 @@ struct ApiResponse {
     error: Option<String>,
 }
 
+// Anthropic API request/response structures
+#[derive(Serialize)]
+struct AnthropicRequest {
+    model: String,
+    max_tokens: u32,
+    messages: Vec<Message>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct AnthropicResponse {
+    content: Vec<ContentBlock>,
+}
+
+#[derive(Deserialize)]
+struct ContentBlock {
+    text: String,
+}
+
 // ============================================================================
 // RAG System Implementation
 // ============================================================================
 
 impl RagSystem {
-    async fn new(onnx_model_path: &str) -> anyhow::Result<Self> {
+        async fn new(
+        onnx_model_path: &str,
+        tokenizer_path: &str,
+        anthropic_api_key: String,
+    ) -> anyhow::Result<Self> {
         // Initialize ONNX Runtime session
         println!("Loading ONNX model from: {}", onnx_model_path);
         let session = Session::builder()?
@@ -103,6 +138,29 @@ impl RagSystem {
             .commit_from_file(onnx_model_path)?;
 
         println!("Model loaded successfully");
+
+        // Initialize tokenizer
+        println!("Loading tokenizer from: {}", tokenizer_path);
+        let mut tokenizer = Tokenizer::from_file(tokenizer_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+        
+        // Configure tokenizer with padding and truncation
+        let max_length = 128;
+        let _ = tokenizer.with_truncation(Some(TruncationParams {
+            max_length,
+            strategy: tokenizers::TruncationStrategy::LongestFirst,
+            stride: 0,
+            ..Default::default()
+        }));
+        
+        let _ = tokenizer.with_padding(Some(PaddingParams {
+            strategy: PaddingStrategy::Fixed(max_length),
+            pad_id: 0,
+            pad_token: "[PAD]".to_string(),
+            ..Default::default()
+        }));
+        
+        println!("Tokenizer loaded and configured successfully");
 
         // Connect to Qdrant (local instance)
         let qdrant_client = Qdrant::from_url("http://localhost:6333").build()?;
@@ -135,41 +193,44 @@ impl RagSystem {
             println!("Collection '{}' already exists", collection_name);
         }
 
+        let anthropic_client = Client::new();
+        
         Ok(Self {
             embedding_model: session,
             qdrant_client,
             collection_name,
             vector_size,
+            tokenizer,
+            anthropic_client,
+            anthropic_api_key,
         })
     }
 
-    fn tokenize_simple(&self, text: &str) -> Vec<i64> {
-        // Simple word-based tokenization (for demo purposes)
-        // In production, use a proper tokenizer like tokenizers-rs
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let max_length = 128;
+    fn tokenize(&self, text: &str) -> anyhow::Result<(Vec<i64>, Vec<i64>)> {
+        // Tokenize the text
+        let encoding = self.tokenizer
+            .encode(text, true)  // true = add special tokens (CLS, SEP)
+            .map_err(|e| anyhow::anyhow!("Tokenization error: {}", e))?;
         
-        let mut tokens: Vec<i64> = words
+        // Get token IDs
+        let tokens: Vec<i64> = encoding
+            .get_ids()
             .iter()
-            .take(max_length - 2)
-            .map(|w| w.chars().map(|c| c as i64).sum::<i64>() % 30000 + 1000)
+            .map(|&id| id as i64)
             .collect();
         
-        // Add CLS and SEP tokens
-        tokens.insert(0, 101); // [CLS]
-        tokens.push(102); // [SEP]
+        // Get attention mask
+        let attention_mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .map(|&mask| mask as i64)
+            .collect();
         
-        // Pad to max_length
-        while tokens.len() < max_length {
-            tokens.push(0); // [PAD]
-        }
-        
-        tokens
+        Ok((tokens, attention_mask))
     }
 
     fn generate_embedding(&mut self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let tokens = self.tokenize_simple(text);
-        let attention_mask: Vec<i64> = tokens.iter().map(|&t| if t != 0 { 1 } else { 0 }).collect();
+        let (tokens, attention_mask) = self.tokenize(text)?;
         
         // Create input tensors - ort 2.0 wants (shape, data) tuple format
         let batch_size = 1;
@@ -420,6 +481,7 @@ async fn add_documents(&mut self, documents: Vec<String>) -> anyhow::Result<usiz
     }
 
     async fn query(&mut self, question: &str) -> anyhow::Result<QueryResponse> {
+        // Retrieve relevant sources
         let sources = self.retrieve(question, 5).await?;
         
         // Build context from sources
@@ -430,12 +492,19 @@ async fn add_documents(&mut self, documents: Vec<String>) -> anyhow::Result<usiz
             .collect::<Vec<_>>()
             .join("\n\n");
         
-        // For this example, we'll create a simple response
-        // In production, you'd call Claude API here
-        let answer = format!(
-            "Based on the retrieved context, here's what I found:\n\n{}\n\n(Note: In production, this would be processed by Claude API)",
-            context
+        // Create prompt for Claude
+        let prompt = format!(
+            "You are a helpful assistant answering questions based on the provided context. \
+            Use the context below to answer the user's question. If the answer cannot be found \
+            in the context, say so clearly.\n\n\
+            Context:\n{}\n\n\
+            Question: {}\n\n\
+            Please provide a clear, concise answer based on the context above.",
+            context, question
         );
+        
+        // Call Anthropic API
+        let answer = self.call_anthropic_api(&prompt).await?;
         
         let sources_response: Vec<Source> = sources
             .iter()
@@ -449,6 +518,42 @@ async fn add_documents(&mut self, documents: Vec<String>) -> anyhow::Result<usiz
             answer,
             sources: sources_response,
         })
+    }
+
+    // Helper function to call Anthropic API
+    async fn call_anthropic_api(&self, prompt: &str) -> anyhow::Result<String> {
+        let request = AnthropicRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 1024,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            }],
+        };
+        
+        let response = self.anthropic_client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.anthropic_api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!("Anthropic API error: {}", error_text));
+        }
+        
+        let api_response: AnthropicResponse = response.json().await?;
+        
+        let answer = api_response
+            .content
+            .first()
+            .map(|block| block.text.clone())
+            .ok_or_else(|| anyhow::anyhow!("No content in API response"))?;
+        
+        Ok(answer)
     }
 
     async fn clear_database(&self) -> anyhow::Result<()> {
@@ -1030,19 +1135,47 @@ async fn clear_database_handler(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🦀 RAG System with ONNX Runtime");
-    println!("================================\n");
+    println!("🦀 RAG System with ONNX Runtime + Claude");
+    println!("==========================================\n");
+    
+    // Get API key from environment variable
+    let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY")
+        .expect("ANTHROPIC_API_KEY environment variable must be set");
     
     // Initialize RAG system
-    // Download model first: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
-    // Convert to ONNX or use pre-converted: optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2 onnx/
-    let mut rag = RagSystem::new("models/model.onnx").await?;
+    let mut rag = RagSystem::new(
+        "models/model.onnx",
+        "models/tokenizer.json",
+        anthropic_api_key,
+    ).await?;
     
     // Add example documents
     let example_docs = vec![
-        "Artificial Intelligence is transforming healthcare...".to_string(),
-        "Climate change is causing significant impacts...".to_string(),
-        "Quantum computing represents a paradigm shift...".to_string(),
+        r#"Artificial Intelligence (AI) is transforming healthcare in numerous ways. 
+        Machine learning algorithms can now detect diseases from medical images with 
+        accuracy rivaling human experts. AI-powered diagnostic tools analyze X-rays, 
+        MRIs, and CT scans to identify conditions like cancer, pneumonia, and fractures.
+    
+        Natural language processing helps extract insights from medical records and 
+        research papers. Predictive models forecast patient outcomes and identify 
+        high-risk individuals who may benefit from early intervention."#.to_string(),
+
+        r#"Climate change is causing significant impacts on global ecosystems. Rising 
+        temperatures are leading to more frequent and severe weather events, including 
+        hurricanes, droughts, and floods. The Arctic ice is melting at an alarming rate, 
+        contributing to sea level rise that threatens coastal communities.
+    
+        Carbon emissions from fossil fuels are the primary driver of climate change. 
+        Renewable energy sources like solar and wind power offer sustainable alternatives 
+        that can help reduce greenhouse gas emissions and mitigate climate impacts."#.to_string(),
+
+        r#"Quantum computing represents a paradigm shift in computational power. Unlike 
+        classical computers that use bits (0 or 1), quantum computers use qubits that 
+        can exist in multiple states simultaneously through superposition.
+    
+        This enables quantum computers to solve certain problems exponentially faster 
+        than classical computers. Applications include cryptography, drug discovery, 
+        optimization problems, and simulating quantum systems."#.to_string(),
     ];
     
     println!("Adding example documents...");
