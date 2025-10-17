@@ -167,7 +167,10 @@ impl RagSystem {
         let qdrant_client = Qdrant::from_url("http://localhost:6333").build()?;
         
         let collection_name = "documents".to_string();
-        let vector_size = 384; // all-MiniLM-L6-v2 dimension
+        // all-MiniLM-L6-v2 dimension
+        // adjust based on the actual model used
+        // cat models/config.json | grep hidden_size
+        let vector_size = 384; 
 
         // Create collection if it doesn't exist
         let collections = qdrant_client.list_collections().await?;
