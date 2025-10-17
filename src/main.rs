@@ -46,6 +46,7 @@ use regex::Regex;
 use tower_http::cors::CorsLayer;
 use tokenizers::{Tokenizer, PaddingParams, PaddingStrategy, TruncationParams};
 use reqwest::Client;
+use anyhow::Context;
 
 
 // ============================================================================
@@ -1140,7 +1141,7 @@ async fn main() -> anyhow::Result<()> {
     
     // Get API key from environment variable
     let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY environment variable must be set");
+        .context("ANTHROPIC_API_KEY environment variable must be set")?;
     
     // Initialize RAG system
     let mut rag = RagSystem::new(
