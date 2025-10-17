@@ -78,6 +78,7 @@ cargo build --release
 ### Start the Server
 
 ```bash
+export ANTHROPIC_API_KEY="<your-api-key-here>"
 cargo run --release
 ```
 
