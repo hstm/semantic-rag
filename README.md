@@ -40,6 +40,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ### 2. Install Qdrant
 
 Using Docker:
+
 ```bash
 docker run -p 6333:6333 qdrant/qdrant
 ```
@@ -89,6 +90,7 @@ The server will start at `http://127.0.0.1:3000`
 Open your browser and navigate to `http://127.0.0.1:3000`
 
 **Features:**
+
 - 📝 **Text Input Tab**: Add documents directly as text
 - 📄 **PDF Upload Tab**: Upload and process multiple PDF files
 - 🔍 **Query Interface**: Ask questions and get AI-powered answers
@@ -97,6 +99,7 @@ Open your browser and navigate to `http://127.0.0.1:3000`
 ### API Endpoints
 
 #### Add Documents (Text)
+
 ```bash
 curl -X POST http://127.0.0.1:3000/add_documents \
   -H "Content-Type: application/json" \
@@ -104,6 +107,7 @@ curl -X POST http://127.0.0.1:3000/add_documents \
 ```
 
 #### Upload PDFs
+
 ```bash
 curl -X POST http://127.0.0.1:3000/upload_pdfs \
   -F "files=@document1.pdf" \
@@ -111,6 +115,7 @@ curl -X POST http://127.0.0.1:3000/upload_pdfs \
 ```
 
 #### Query
+
 ```bash
 curl -X POST http://127.0.0.1:3000/query \
   -H "Content-Type: application/json" \
@@ -118,6 +123,7 @@ curl -X POST http://127.0.0.1:3000/query \
 ```
 
 #### Clear Database
+
 ```bash
 curl -X POST http://127.0.0.1:3000/clear_database
 ```
@@ -143,6 +149,7 @@ Semantically Coherent Chunks
 ```
 
 **Parameters:**
+
 - `similarity_threshold`: 0.7 (sentences with similarity > 0.7 are grouped together)
 - `max_chunk_size`: 1000 characters
 - `min_chunk_merge_size`: 200 characters
@@ -215,7 +222,7 @@ ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
 qdrant-client = "1.15"
 tower-http = { version = "0.6.6", features = ["cors"] }
 anyhow = "1.0.100"
-pdf-extract = "0.7"
+pdf-extract = "0.10"
 regex = "1.12.2"
 tokenizers = "0.22.1"
 reqwest = { version = "0.12", features = ["json"] }
@@ -246,18 +253,21 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🐛 Troubleshooting
 
 **Model not found?**
+
 ```bash
 # Make sure the model is in the correct location
 ls models/model.onnx
 ```
 
 **Qdrant connection failed?**
+
 ```bash
 # Check if Qdrant is running
 curl http://localhost:6333/collections
 ```
 
 **Out of memory during chunking?**
+
 ```bash
 # Reduce max_chunk_size or process fewer documents at once
 let chunks = self.semantic_chunk_text(&doc, 0.7, 500)?;
