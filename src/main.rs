@@ -265,7 +265,7 @@ impl RagSystem {
     fn split_into_sentences(&self, text: &str) -> Vec<String> {
         // Simple sentence splitting using regex
         // Matches periods, exclamation marks, or question marks followed by whitespace or end of string
-        let sentence_regex = Regex::new(r"(?<=[.!?])\s+(?=[A-Z])").unwrap();
+        let sentence_regex = Regex::new(r"[.!?]\s+").unwrap();
 
         sentence_regex
             .split(text)
@@ -375,7 +375,7 @@ impl RagSystem {
             // If chunk is very small and not the last one, try to merge with next
             if chunk.len() < 200 && i + 1 < chunks.len() {
                 let next_chunk = &chunks[i + 1];
-                if chunk.len() + next_chunk.len() + 1 <= max_chunk_size {
+                if chunk.len() + next_chunk.len() < max_chunk_size {
                     final_chunks.push(format!("{} {}", chunk, next_chunk));
                     i += 2; // Skip next chunk since we merged it
                     continue;
@@ -483,7 +483,7 @@ impl RagSystem {
                     .get("text")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| String::new());
+                    .unwrap_or_default();
                 let score = point.score;
                 (text, score)
             })
