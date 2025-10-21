@@ -246,7 +246,7 @@ impl RagSystem {
 
         // embeddings is already (&Shape, &[f32])
         let (_shape, data) = embeddings;
-        let embedding_vec: Vec<f32> = data.iter().copied().collect();
+        let embedding_vec: Vec<f32> = data.to_vec();
 
         // Mean pooling (take first vector_size elements as sentence embedding)
         let sentence_embedding: Vec<f32> = embedding_vec
